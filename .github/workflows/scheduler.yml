@@ -1,0 +1,74 @@
+name: ThinkBoard Scheduler
+
+on:
+  schedule:
+    # 댓글: 평일 오전 9시, 12시, 오후 3시, 6시, 9시 (KST = UTC+9)
+    - cron: '0 0 * * 1-5'   # KST 09:00
+    - cron: '0 3 * * 1-5'   # KST 12:00
+    - cron: '0 6 * * 1-5'   # KST 15:00
+    - cron: '0 9 * * 1-5'   # KST 18:00
+    - cron: '0 12 * * 1-5'  # KST 21:00
+    # 새 글: 매일 오전 8시, 오후 1시 (KST)
+    - cron: '0 23 * * *'    # KST 08:00 (전날 23:00 UTC)
+    - cron: '0 4 * * *'     # KST 13:00
+  workflow_dispatch:
+    inputs:
+      action:
+        description: '실행할 작업'
+        required: true
+        default: 'comment'
+        type: choice
+        options:
+          - comment
+          - post
+
+jobs:
+  run-scheduler:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치
+        run: pip install anthropic requests python-dotenv
+
+      - name: 스케줄러 실행 (댓글)
+        if: |
+          github.event_name == 'schedule' && (
+            github.event.schedule == '0 0 * * 1-5' ||
+            github.event.schedule == '0 3 * * 1-5' ||
+            github.event.schedule == '0 6 * * 1-5' ||
+            github.event.schedule == '0 9 * * 1-5' ||
+            github.event.schedule == '0 12 * * 1-5'
+          )
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SCHEDULER_ACTION: comment
+        run: python scheduler.py
+
+      - name: 스케줄러 실행 (새 글)
+        if: |
+          github.event_name == 'schedule' && (
+            github.event.schedule == '0 23 * * *' ||
+            github.event.schedule == '0 4 * * *'
+          )
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SCHEDULER_ACTION: post
+        run: python scheduler.py
+
+      - name: 수동 실행
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SCHEDULER_ACTION: ${{ github.event.inputs.action }}
+        run: python scheduler.py
