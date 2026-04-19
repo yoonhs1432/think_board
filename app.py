@@ -152,11 +152,12 @@ st.markdown("""
     padding: 1px 8px; border-radius: 99px; font-size: 0.72rem; margin-bottom: 4px;
 }
 .tag.ai-tag { background: #fbe9e7; color: #bf360c; }
-/* 열기 버튼 숨기고 row 클릭감 */
-div[data-testid="stButton"] button { 
-    background: none !important; border: none !important;
-    padding: 0 !important; color: transparent !important;
-    height: 0 !important; overflow: hidden !important;
+/* 글쓰기 버튼 스타일 */
+div[data-testid="stButton"] > button[kind="secondary"] {
+    background: #6c63ff !important;
+    color: white !important;
+    border: none !important;
+    font-weight: 600 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -364,9 +365,13 @@ else:
     with col1:
         st.markdown("<div class='board-title'>💬 ThinkBoard</div>", unsafe_allow_html=True)
     with col2:
-        if st.button("✏️ 글쓰기"):
+        st.markdown("<div style='padding-top:0.4rem'>", unsafe_allow_html=True)
+        if st.button("✏️ 글쓰기", key="write_btn", use_container_width=True):
             st.session_state.page = "write"
             st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<hr style='margin:0.3rem 0 0.5rem;border:none;border-top:2px solid #6c63ff'>", unsafe_allow_html=True)
 
     if not posts:
         st.markdown("<div style='text-align:center;color:#aaa;margin-top:3rem;'>첫 글을 써보세요!</div>",
