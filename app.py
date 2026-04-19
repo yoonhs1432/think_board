@@ -2,10 +2,10 @@ import streamlit as st
 import anthropic
 import random
 import os
+import json
 from datetime import datetime
 from github_storage import GitHubStorage
 
-# ── 설정 ──────────────────────────────────────────────
 GITHUB_REPO = "yoonhs1432/think_board"
 TAGS = ["업무", "일상", "아이디어", "기타"]
 
@@ -23,31 +23,20 @@ COMMENT_SYSTEM_PROMPT = """당신은 대한민국 직장인 커뮤니티(블라�
 
 POST_SYSTEM_PROMPT = """당신은 대한민국 직장인 커뮤니티에 글을 올리는 익명 사용자입니다.
 기존 글들을 참고해서 관련 새 글을 작성합니다.
+글 유형 (랜덤): 1.관련 뉴스/트렌드(링크포함) 2.비슷한 경험 3.반대의견 4.실용적인 팁
+말투: 블라인드/클리앙 스타일
+출력 형식 (반드시 JSON만):
+{"title":"글 제목","tag":"업무|일상|아이디어|기타","body":"글 본문(200자 내외)","link":"URL또는null","link_title":"링크제목또는null"}"""
 
-글 유형 (랜덤):
-1. 관련 뉴스/트렌드 공유 (링크 포함)
-2. 비슷한 경험 공유
-3. 반대 의견/다른 시각
-4. 실용적인 팁
-
-말투: 블라인드/클리앙 스타일, 자연스러운 구어체
-
-출력 형식 (반드시 JSON만, 다른 텍스트 없이):
-{
-  "title": "글 제목",
-  "tag": "업무|일상|아이디어|기타",
-  "body": "글 본문 (200자 내외)",
-  "link": "관련 URL 또는 null",
-  "link_title": "링크 제목 또는 null"
-}"""
-
-# ── 유틸 ───────────────────────────────────────────────
 def now_str():
-    return datetime.now().strftime("%m/%d %H:%M")
+    return datetime.now().strftime("%Y/%m/%d %H:%M")
 
 def time_ago(time_str):
     try:
-        t = datetime.strptime(time_str, "%m/%d %H:%M").replace(year=datetime.now().year)
+        if len(time_str) <= 11:
+            t = datetime.strptime(time_str, "%m/%d %H:%M").replace(year=datetime.now().year)
+        else:
+            t = datetime.strptime(time_str, "%Y/%m/%d %H:%M")
         diff = datetime.now() - t
         mins = int(diff.total_seconds() / 60)
         if mins < 1: return "방금"
@@ -60,16 +49,13 @@ def time_ago(time_str):
 def pick_reviewer():
     return random.choice(REVIEWER_NAMES)
 
-# ── 클라이언트 ─────────────────────────────────────────
 def get_clients():
     gh_token = os.getenv("GITHUB_TOKEN") or st.session_state.get("gh_token", "")
     ant_key  = os.getenv("ANTHROPIC_API_KEY") or st.session_state.get("ant_key", "")
-
     storage = GitHubStorage(gh_token, GITHUB_REPO) if gh_token else None
     ai      = anthropic.Anthropic(api_key=ant_key) if ant_key else None
     return storage, ai
 
-# ── AI 댓글 생성 ───────────────────────────────────────
 def generate_ai_comment(ai, thread, post_body):
     messages = [{"role": "user", "content": f"원글:\n{post_body}"}]
     for item in thread:
@@ -77,115 +63,71 @@ def generate_ai_comment(ai, thread, post_body):
         messages.append({"role": role, "content": item["text"]})
     if messages[-1]["role"] == "assistant":
         messages.append({"role": "user", "content": "계속 리뷰해주세요."})
-    resp = ai.messages.create(
-        model="claude-opus-4-5", max_tokens=300,
-        system=COMMENT_SYSTEM_PROMPT, messages=messages
-    )
+    resp = ai.messages.create(model="claude-opus-4-5", max_tokens=300,
+                               system=COMMENT_SYSTEM_PROMPT, messages=messages)
     return resp.content[0].text.strip(), pick_reviewer()
 
-# ── AI 새 글 생성 ──────────────────────────────────────
 def generate_ai_post(ai, posts):
-    context = "\n\n".join([
-        f"제목: {p['title']}\n내용: {p['body'][:200]}"
-        for p in posts[:5]
-    ])
-    resp = ai.messages.create(
-        model="claude-opus-4-5", max_tokens=600,
-        system=POST_SYSTEM_PROMPT,
-        messages=[{"role": "user",
-                   "content": f"기존 글들:\n{context}\n\n위 글들과 관련된 새 글을 작성해주세요."}]
-    )
+    context = "\n\n".join([f"제목: {p['title']}\n내용: {p['body'][:200]}" for p in posts[:5]])
+    resp = ai.messages.create(model="claude-opus-4-5", max_tokens=600,
+                               system=POST_SYSTEM_PROMPT,
+                               messages=[{"role": "user", "content": f"기존 글들:\n{context}\n\n관련 새 글을 작성해주세요."}])
     text = resp.content[0].text.strip().replace("```json","").replace("```","").strip()
-    import json
     return json.loads(text)
 
-# ── CSS ───────────────────────────────────────────────
 st.set_page_config(page_title="ThinkBoard", page_icon="💬", layout="centered")
 st.markdown("""
 <style>
-.block-container { padding: 0.5rem 0.8rem !important; max-width: 480px !important; }
-.board-title { font-size: 1.15rem; font-weight: 700; color: #333; padding: 0.5rem 0; }
+.block-container { padding: 0.5rem 0.6rem 4rem !important; max-width: 480px !important; }
+.stButton button { border-radius: 8px !important; }
+.board-title { font-size: 1.1rem; font-weight: 700; color: #333; line-height: 2; }
 .post-row {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 0.65rem 0.5rem; border-bottom: 1px solid #eee; border-radius: 6px;
+    padding: 0.42rem 0.3rem; border-bottom: 1px solid #eee;
 }
-.post-row.unread { background: #f0eeff; }
-.post-list-title { font-size: 0.92rem; color: #222; flex: 1; }
-.ai-badge {
-    font-size: 0.68rem; background: #fbe9e7; color: #bf360c;
-    padding: 1px 5px; border-radius: 4px; margin-right: 4px;
-}
-.post-list-right {
-    display: flex; flex-direction: column; align-items: flex-end;
-    gap: 2px; margin-left: 8px; min-width: 60px;
-}
-.post-list-count { font-size: 0.75rem; color: #6c63ff; font-weight: 600; }
-.post-list-time { font-size: 0.7rem; color: #aaa; }
-.unread-dot {
-    width: 7px; height: 7px; background: #6c63ff;
-    border-radius: 50%; display: inline-block; margin-right: 5px;
-}
-.post-box {
-    background: #f9f9f9; border-left: 3px solid #6c63ff;
-    padding: 0.9rem 1rem; border-radius: 6px; margin-bottom: 0.5rem; font-size: 0.92rem;
-}
+.post-row.unread { background: #f0eeff; border-radius: 4px; }
+.post-list-title { font-size: 0.88rem; color: #222; flex: 1; line-height: 1.3; }
+.ai-badge { font-size: 0.65rem; background: #fbe9e7; color: #bf360c; padding: 1px 4px; border-radius: 3px; margin-right: 3px; }
+.post-list-right { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; margin-left: 6px; min-width: 50px; }
+.post-list-count { font-size: 0.72rem; color: #6c63ff; font-weight: 600; }
+.post-list-time { font-size: 0.66rem; color: #aaa; }
+.unread-dot { width: 6px; height: 6px; background: #6c63ff; border-radius: 50%; display: inline-block; margin-right: 4px; }
+/* 열기 버튼 숨김 */
+div[data-testid="stButton"] > button[kind="secondary"] { display: none !important; }
+.post-box { background: #f9f9f9; border-left: 3px solid #6c63ff; padding: 0.9rem 1rem; border-radius: 6px; margin-bottom: 0.5rem; font-size: 0.92rem; }
 .post-box.ai-post { border-left-color: #ff7043; }
-.post-link {
-    display: block; background: #fff3e0; border: 1px solid #ffcc80;
-    border-radius: 6px; padding: 0.5rem 0.75rem; margin-top: 8px;
-    font-size: 0.82rem; color: #e65100; text-decoration: none;
-}
-.comment-ai {
-    background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 8px;
-    padding: 0.6rem 0.9rem; margin: 0.35rem 0 0.35rem 1.2rem; font-size: 0.87rem;
-}
-.comment-me {
-    background: #eef6ff; border: 1px solid #c8dfff; border-radius: 8px;
-    padding: 0.6rem 0.9rem; margin: 0.35rem 0 0.35rem 1.2rem; font-size: 0.87rem;
-}
+.post-link { display: block; background: #fff3e0; border: 1px solid #ffcc80; border-radius: 6px; padding: 0.5rem 0.75rem; margin-top: 8px; font-size: 0.82rem; color: #e65100; text-decoration: none; }
+.comment-ai { background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.3rem 0 0.3rem 1rem; font-size: 0.85rem; }
+.comment-me { background: #eef6ff; border: 1px solid #c8dfff; border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.3rem 0 0.3rem 1rem; font-size: 0.85rem; }
 .comment-new { border-color: #a59bff !important; background: #f0eeff !important; }
-.reviewer-name { font-size: 0.75rem; font-weight: 600; color: #555; margin-bottom: 2px; }
-.my-name { font-size: 0.75rem; font-weight: 600; color: #2a6dd9; margin-bottom: 2px; }
-.meta { color: #bbb; font-size: 0.7rem; margin-top: 3px; }
-.tag {
-    display: inline-block; background: #ede9ff; color: #5a52c7;
-    padding: 1px 8px; border-radius: 99px; font-size: 0.72rem; margin-bottom: 4px;
-}
+.reviewer-name { font-size: 0.73rem; font-weight: 600; color: #555; margin-bottom: 2px; }
+.my-name { font-size: 0.73rem; font-weight: 600; color: #2a6dd9; margin-bottom: 2px; }
+.meta { color: #bbb; font-size: 0.68rem; margin-top: 3px; }
+.tag { display: inline-block; background: #ede9ff; color: #5a52c7; padding: 1px 7px; border-radius: 99px; font-size: 0.7rem; margin-bottom: 3px; }
 .tag.ai-tag { background: #fbe9e7; color: #bf360c; }
-/* 글쓰기 버튼 스타일 */
-div[data-testid="stButton"] > button[kind="secondary"] {
-    background: #6c63ff !important;
-    color: white !important;
-    border: none !important;
-    font-weight: 600 !important;
-}
+/* 글쓰기 버튼만 보이게 - primary 버튼 */
+div[data-testid="stButton"] > button[kind="primary"] { display: block !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── 세션 초기화 ────────────────────────────────────────
-for key, val in [("page","list"), ("selected_id",None),
-                 ("read_posts",set()), ("read_comments",{})]:
+for key, val in [("page","list"), ("selected_id",None), ("read_posts",set()), ("read_comments",{})]:
     if key not in st.session_state:
         st.session_state[key] = val
 
-# ── 사이드바 ───────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ 설정")
     gh_token = os.getenv("GITHUB_TOKEN") or ""
     ant_key  = os.getenv("ANTHROPIC_API_KEY") or ""
-
     if gh_token:
         st.success("✅ GitHub 토큰 로드됨")
     else:
         v = st.text_input("GitHub Token", type="password", placeholder="ghp_...")
         if v: st.session_state["gh_token"] = v
-
     if ant_key:
         st.success("✅ Anthropic 키 로드됨")
     else:
         v = st.text_input("Anthropic API Key", type="password", placeholder="sk-ant-...")
         if v: st.session_state["ant_key"] = v
-
     st.markdown("---")
     st.markdown("**수동 AI 실행**")
     if st.button("🤖 AI 새 글 생성"):
@@ -196,25 +138,15 @@ with st.sidebar:
                 with st.spinner("AI가 글 작성 중..."):
                     try:
                         data = generate_ai_post(ai, posts)
-                        new_post = {
-                            "id": int(datetime.now().timestamp()),
-                            "title": data.get("title","AI 글"),
-                            "tag": data.get("tag","기타"),
-                            "body": data.get("body",""),
-                            "link": data.get("link"),
-                            "link_title": data.get("link_title"),
-                            "created": now_str(),
-                            "is_ai_post": True,
-                            "author": pick_reviewer(),
-                            "thread": []
-                        }
-                        posts.insert(0, new_post)
+                        posts.insert(0, {"id": int(datetime.now().timestamp()), "title": data.get("title","AI 글"),
+                                         "tag": data.get("tag","기타"), "body": data.get("body",""),
+                                         "link": data.get("link"), "link_title": data.get("link_title"),
+                                         "created": now_str(), "is_ai_post": True, "author": pick_reviewer(), "thread": []})
                         storage.save(posts)
                         st.success("완료!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"오류: {e}")
-
     if st.button("💬 AI 댓글 달기"):
         storage, ai = get_clients()
         if storage and ai:
@@ -227,10 +159,8 @@ with st.sidebar:
                         comment, reviewer = generate_ai_comment(ai, target["thread"], target["body"])
                         for p in posts:
                             if p["id"] == target["id"]:
-                                p["thread"].append({
-                                    "is_ai": True, "text": comment,
-                                    "time": now_str(), "reviewer": reviewer, "is_new": True
-                                })
+                                p["thread"].append({"is_ai": True, "text": comment,
+                                                    "time": now_str(), "reviewer": reviewer, "is_new": True})
                                 break
                         storage.save(posts)
                         st.success(f"'{target['title'][:15]}'에 댓글 추가!")
@@ -238,7 +168,6 @@ with st.sidebar:
                     except Exception as e:
                         st.error(f"오류: {e}")
 
-# ── 클라이언트 체크 ────────────────────────────────────
 storage, ai = get_clients()
 if not storage or not ai:
     st.warning("사이드바에 GitHub Token과 Anthropic API Key를 입력해주세요.")
@@ -250,7 +179,7 @@ posts = storage.load()
 # 글쓰기 페이지
 # ══════════════════════════════════════════════════════
 if st.session_state.page == "write":
-    if st.button("← 목록"):
+    if st.button("← 목록", key="back_write", type="primary"):
         st.session_state.page = "list"
         st.rerun()
     st.markdown("### ✏️ 새 글 쓰기")
@@ -261,13 +190,10 @@ if st.session_state.page == "write":
         if title.strip() and body.strip():
             with st.spinner("리뷰어가 읽는 중..."):
                 first_comment, reviewer = generate_ai_comment(ai, [], body)
-            new_post = {
-                "id": int(datetime.now().timestamp()),
-                "title": title.strip(), "tag": tag, "body": body.strip(),
-                "created": now_str(), "is_ai_post": False,
-                "thread": [{"is_ai": True, "text": first_comment,
-                            "time": now_str(), "reviewer": reviewer, "is_new": False}]
-            }
+            new_post = {"id": int(datetime.now().timestamp()), "title": title.strip(),
+                        "tag": tag, "body": body.strip(), "created": now_str(), "is_ai_post": False,
+                        "thread": [{"is_ai": True, "text": first_comment,
+                                    "time": now_str(), "reviewer": reviewer, "is_new": False}]}
             posts.insert(0, new_post)
             storage.save(posts)
             st.session_state.page = "list"
@@ -285,13 +211,14 @@ elif st.session_state.page == "detail":
         st.rerun()
 
     pid = str(post["id"])
+    thread = post.get("thread", [])
     st.session_state.read_posts.add(pid)
-    st.session_state.read_comments[pid] = len(post.get("thread", []))
-    for c in post.get("thread", []):
+    st.session_state.read_comments[pid] = len(thread)
+    for c in thread:
         c["is_new"] = False
     storage.save(posts)
 
-    if st.button("← 목록"):
+    if st.button("← 목록", key="back_detail", type="primary"):
         st.session_state.page = "list"
         st.rerun()
 
@@ -311,9 +238,8 @@ elif st.session_state.page == "detail":
     </div>
     """, unsafe_allow_html=True)
 
-    thread = post.get("thread", [])
     if thread:
-        st.markdown(f"<div style='font-size:0.8rem;color:#888;margin:0.5rem 0 0.3rem;'>댓글 {len(thread)}개</div>",
+        st.markdown(f"<div style='font-size:0.78rem;color:#888;margin:0.4rem 0 0.2rem;'>댓글 {len(thread)}개</div>",
                     unsafe_allow_html=True)
         for c in thread:
             new_cls = "comment-new" if c.get("is_new") else ""
@@ -338,15 +264,11 @@ elif st.session_state.page == "detail":
         if reply.strip():
             idx = next((i for i, p in enumerate(posts) if p["id"] == post["id"]), None)
             if idx is not None:
-                posts[idx]["thread"].append({
-                    "is_ai": False, "text": reply.strip(), "time": now_str()
-                })
+                posts[idx]["thread"].append({"is_ai": False, "text": reply.strip(), "time": now_str()})
                 with st.spinner("리뷰어가 읽는 중..."):
                     ai_reply, reviewer = generate_ai_comment(ai, posts[idx]["thread"], post["body"])
-                posts[idx]["thread"].append({
-                    "is_ai": True, "text": ai_reply,
-                    "time": now_str(), "reviewer": reviewer, "is_new": False
-                })
+                posts[idx]["thread"].append({"is_ai": True, "text": ai_reply,
+                                             "time": now_str(), "reviewer": reviewer, "is_new": False})
                 st.session_state.read_comments[pid] = len(posts[idx]["thread"])
                 storage.save(posts)
                 st.rerun()
@@ -361,17 +283,16 @@ elif st.session_state.page == "detail":
 # 목록 페이지
 # ══════════════════════════════════════════════════════
 else:
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("<div class='board-title'>💬 ThinkBoard</div>", unsafe_allow_html=True)
     with col2:
-        st.markdown("<div style='padding-top:0.4rem'>", unsafe_allow_html=True)
-        if st.button("✏️ 글쓰기", key="write_btn", use_container_width=True):
+        if st.button("✏️ 글쓰기", key="write_btn", type="primary", use_container_width=True):
             st.session_state.page = "write"
             st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("<hr style='margin:0.3rem 0 0.5rem;border:none;border-top:2px solid #6c63ff'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:0.2rem 0 0.3rem;border:none;border-top:2px solid #6c63ff'>",
+                unsafe_allow_html=True)
 
     if not posts:
         st.markdown("<div style='text-align:center;color:#aaa;margin-top:3rem;'>첫 글을 써보세요!</div>",
@@ -383,16 +304,18 @@ else:
             cnt = len(thread)
             is_ai = post.get("is_ai_post", False)
 
-            never_read    = pid not in st.session_state.read_posts
-            new_comments  = (pid in st.session_state.read_comments and
-                             cnt > st.session_state.read_comments[pid])
-            has_new_flag  = any(c.get("is_new") for c in thread)
-            is_unread     = never_read or new_comments or has_new_flag
+            # 수정 5: 세션 기반 읽음 상태 (새로고침 후에도 세션 내 유지)
+            never_read   = pid not in st.session_state.read_posts
+            new_comments = (pid in st.session_state.read_comments and
+                            cnt > st.session_state.read_comments[pid])
+            has_new_flag = any(c.get("is_new") for c in thread)
+            is_unread    = never_read or new_comments or has_new_flag
 
             dot      = "<span class='unread-dot'></span>" if is_unread else ""
             ai_badge = "<span class='ai-badge'>AI</span>" if is_ai else ""
             cnt_str  = f"[{cnt}]" if cnt else ""
 
+            # 수정 3: 간격 줄인 리스트 행
             st.markdown(f"""
             <div class="post-row {'unread' if is_unread else ''}">
                 <div class="post-list-title">{dot}{ai_badge}{post['title']}</div>
@@ -403,7 +326,10 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button("열기", key=f"open_{post['id']}"):
+            # 수정 2: 제목 클릭으로 이동 (버튼은 CSS로 숨기고 위 HTML 행과 겹침)
+            if st.button(post['title'], key=f"open_{post['id']}"):
+                st.session_state.read_posts.add(pid)
+                st.session_state.read_comments[pid] = cnt
                 st.session_state.selected_id = post["id"]
                 st.session_state.page = "detail"
                 st.rerun()
