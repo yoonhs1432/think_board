@@ -214,15 +214,15 @@ def pick_agent_excluding(thread):
     return name, AGENTS[name]
 
 def get_client():
-    api_key = os.getenv("ANTHROPIC_API_KEY") or st.session_state.get("manual_api_key", "")
+    # Streamlit Cloud Secrets 우선, 없으면 환경변수, 없으면 수동 입력
+    api_key = (
+        st.secrets.get("ANTHROPIC_API_KEY", None)
+        or os.getenv("ANTHROPIC_API_KEY")
+        or st.session_state.get("manual_api_key", "")
+    )
     if api_key:
         return anthropic.Anthropic(api_key=api_key)
     return None
-    api_key = os.getenv("ANTHROPIC_API_KEY") or st.session_state.get("manual_api_key", "")
-    if api_key:
-        return anthropic.Anthropic(api_key=api_key)
-    return None
-
 def generate_ai_comment(client, thread_history, post_body, agent_name=None, mode="comment", parent_comment=None):
     """
     mode="comment": 새 1단계 댓글
