@@ -1,0 +1,6 @@
+# Data files - privacy protection
+posts.json
+trash.json
+
+# Environment
+.env
