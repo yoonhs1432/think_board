@@ -13,6 +13,54 @@ DATA_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "posts.jso
 TRASH_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trash.json")
 TAGS = ["전체", "업무", "일상", "육아", "기타"]
 
+# GitHub Storage 설정
+REPO = "yoonhs1432/think_board"
+
+def _gh_token():
+    try:
+        return st.secrets.get("GITHUB_TOKEN", "") or os.getenv("GITHUB_TOKEN", "")
+    except:
+        return os.getenv("GITHUB_TOKEN", "")
+
+def _gh_get(filename):
+    import urllib.request
+    token = _gh_token()
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/contents/{filename}",
+        headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    )
+    try:
+        with urllib.request.urlopen(req) as r:
+            d = json.loads(r.read())
+            content = json.loads(import_base64().b64decode(d["content"].replace("\n","")).decode())
+            return content, d["sha"]
+    except:
+        return None, None
+
+def _gh_put(filename, data, sha=None, msg="update data"):
+    import urllib.request, base64
+    token = _gh_token()
+    content = base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode()
+    body = {"message": msg, "content": content}
+    if sha:
+        body["sha"] = sha
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/contents/{filename}",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"token {token}", "Content-Type": "application/json"},
+        method="PUT"
+    )
+    try:
+        with urllib.request.urlopen(req):
+            return True
+    except Exception as e:
+        # fallback: 로컬에도 저장
+        return False
+
+def import_base64():
+    import base64
+    return base64
+
 # ── AI 에이전트 정의 ────────────────────────────────────
 AGENTS = {
     "팩트폭격기": {
@@ -116,26 +164,40 @@ POST_SYSTEM_PROMPT_TEMPLATE = """당신은 대한민국 직장인 커뮤니티�
 출력: 반드시 아래 형식의 JSON 배열만, 다른 텍스트 없이.
 title, tag(업무/일상/육아/기타 중 하나), body(400~600자), link(URL 또는 null), link_title(링크제목 또는 null) 필드를 가진 객체 4개 배열."""
 
-# ── 데이터 ─────────────────────────────────────────────
+# ── 데이터 (GitHub Storage) ────────────────────────────
 def load_posts():
+    data, _ = _gh_get("posts.json")
+    if data is not None:
+        return data
+    # fallback: 로컬 파일
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return []
 
 def save_posts(posts):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(posts, f, ensure_ascii=False, indent=2)
+    _, sha = _gh_get("posts.json")
+    ok = _gh_put("posts.json", posts, sha, "update: posts.json")
+    if not ok:
+        # fallback: 로컬 저장
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(posts, f, ensure_ascii=False, indent=2)
 
 def load_trash():
+    data, _ = _gh_get("trash.json")
+    if data is not None:
+        return data
     if os.path.exists(TRASH_FILE):
         with open(TRASH_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return []
 
 def save_trash(trash):
-    with open(TRASH_FILE, "w", encoding="utf-8") as f:
-        json.dump(trash, f, ensure_ascii=False, indent=2)
+    _, sha = _gh_get("trash.json")
+    ok = _gh_put("trash.json", trash, sha, "update: trash.json")
+    if not ok:
+        with open(TRASH_FILE, "w", encoding="utf-8") as f:
+            json.dump(trash, f, ensure_ascii=False, indent=2)
 
 def now_str():
     return datetime.now().strftime("%Y/%m/%d %H:%M")
@@ -214,15 +276,15 @@ def pick_agent_excluding(thread):
     return name, AGENTS[name]
 
 def get_client():
-    # Streamlit Cloud Secrets 우선, 없으면 환경변수, 없으면 수동 입력
-    api_key = (
-        st.secrets.get("ANTHROPIC_API_KEY", None)
-        or os.getenv("ANTHROPIC_API_KEY")
-        or st.session_state.get("manual_api_key", "")
-    )
+    api_key = os.getenv("ANTHROPIC_API_KEY") or st.session_state.get("manual_api_key", "")
     if api_key:
         return anthropic.Anthropic(api_key=api_key)
     return None
+    api_key = os.getenv("ANTHROPIC_API_KEY") or st.session_state.get("manual_api_key", "")
+    if api_key:
+        return anthropic.Anthropic(api_key=api_key)
+    return None
+
 def generate_ai_comment(client, thread_history, post_body, agent_name=None, mode="comment", parent_comment=None):
     """
     mode="comment": 새 1단계 댓글
